@@ -205,12 +205,26 @@ def generate_launch_description():
         parameters=[joy_params],
         remappings=[('/cmd_vel','/cmd_vel_joy')]
     )
-
+    
+    twist_mux_params = PathJoinSubstitution(
+        [
+            FindPackageShare("my_odrive_botwheel_explorer"),
+            "config",
+            "twist_mux.yaml",
+        ]
+    )
+    twist_mux = Node(
+            package="twist_mux",
+            executable="twist_mux",
+            parameters=[twist_mux_params],
+            remappings=[('/cmd_vel_out','/cmd_vel_mux')]
+        )
+    
     twist_stamper = Node(
         package='twist_stamper',
         executable='twist_stamper',
         parameters=[{'use_sim_time': False}],
-        remappings=[('/cmd_vel_in','/cmd_vel_joy'),
+        remappings=[('/cmd_vel_in','/cmd_vel_mux'),
                     ('/cmd_vel_out','/botwheel_explorer/cmd_vel')]
     )
     
@@ -226,6 +240,7 @@ def generate_launch_description():
         joy_node,
         teleop_node,
         twist_stamper,
+        twist_mux,
     ]
 
     return LaunchDescription(declared_arguments + nodes)
