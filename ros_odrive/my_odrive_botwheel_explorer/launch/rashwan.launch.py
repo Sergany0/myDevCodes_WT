@@ -16,13 +16,14 @@
 import os
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, RegisterEventHandler
+from launch.actions import DeclareLaunchArgument, RegisterEventHandler, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.substitutions import Command, FindExecutable, PathJoinSubstitution, LaunchConfiguration
 
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+
 
 
 def generate_launch_description():
@@ -45,7 +46,7 @@ def generate_launch_description():
 
     # Initialize Arguments
     gui = LaunchConfiguration("gui")
-    use_mock_hardware = LaunchConfiguration("use_mock_hardware")
+    # use_mock_hardware = LaunchConfiguration("use_mock_hardware")
 
     # Get URDF via xacro
     robot_description_content = Command(
@@ -69,9 +70,25 @@ def generate_launch_description():
             "diffbot_controllers.yaml",
         ]
     )
+   
     rviz_config_file = PathJoinSubstitution(
-        [FindPackageShare("ros2_control_demo_description"), "diffbot/rviz", "diffbot.rviz"]
+        [
+           FindPackageShare("my_odrive_botwheel_explorer"),
+           "rviz",
+           "mybot.rviz"
+        ]
+
     )
+    
+    rviz_node = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="log",
+        arguments=["-d", rviz_config_file],
+        condition=IfCondition(gui),
+    )
+
 
     control_node = Node(
         package="controller_manager",
@@ -90,14 +107,6 @@ def generate_launch_description():
         remappings=[
             ("/botwheel_explorer/cmd_vel_unstamped", "/cmd_vel"),
         ],
-    )
-    rviz_node = Node(
-        package="rviz2",
-        executable="rviz2",
-        name="rviz2",
-        output="log",
-        arguments=["-d", rviz_config_file],
-        condition=IfCondition(gui),
     )
 
     joint_state_broadcaster_spawner = Node(
@@ -128,13 +137,28 @@ def generate_launch_description():
         )
     )
 
-
     camera = Node(
         package='v4l2_camera',
         executable='v4l2_camera_node',
         output='screen',
         namespace='camera',
         parameters=[{'image_size': [640,480],'camera_frame_id': 'camera_link_optical','time_per_frame': [1, 6],}]
+    )
+
+    # Launch SLAM
+    slam_param = PathJoinSubstitution(
+        [
+            FindPackageShare("my_odrive_botwheel_explorer"),
+            "config",
+            "mapper_params_online_async.yaml",
+        ]
+    )
+
+    slam_node = Node(
+        package='slam_toolbox',
+        executable='async_slam_toolbox_node',
+        output='screen',
+        parameters=[slam_param,{'use_sim_time': False}],
     )
 
 
@@ -158,8 +182,58 @@ def generate_launch_description():
             'inverted': inverted,
             'angle_compensate': angle_compensate
         }],
+    )
+    
+    joy_params = PathJoinSubstitution(
+        [
+            FindPackageShare("my_odrive_botwheel_explorer"),
+            "config",
+            "joystick.yaml",
+        ]
+    )
+
+    joy_node = Node(
+        package='joy',
+        executable='joy_node',
+        parameters=[joy_params],
+    )
+    
+    teleop_node = Node(
+        package='teleop_twist_joy',
+        executable='teleop_node',
+        name='teleop_node',
+        parameters=[joy_params],
+        remappings=[('/cmd_vel','/cmd_vel_joy')]
+    )
+    
+    twist_mux_params = PathJoinSubstitution(
+        [
+            FindPackageShare("my_odrive_botwheel_explorer"),
+            "config",
+            "twist_mux.yaml",
+        ]
+    )
+    twist_mux = Node(
+            package="twist_mux",
+            executable="twist_mux",
+            parameters=[twist_mux_params],
+            remappings=[('/cmd_vel_out','/cmd_vel_mux')]
         )
     
+    twist_stamper = Node(
+        package='twist_stamper',
+        executable='twist_stamper',
+        parameters=[{'use_sim_time': False}],
+        remappings=[('/cmd_vel_in','/cmd_vel_mux'),
+                    ('/cmd_vel_out','/botwheel_explorer/cmd_vel')]
+    )
+
+
+    foxglove_bridge_launch = Node(
+        package='foxglove_bridge',
+        executable='foxglove_bridge',
+        output='screen',
+    )
 
     nodes = [
         control_node,
@@ -169,6 +243,12 @@ def generate_launch_description():
         delay_robot_controller_spawner_after_joint_state_broadcaster_spawner,
         camera, 
         lidar,
+        slam_node,
+        joy_node,
+        teleop_node,
+        twist_stamper,
+        twist_mux,
+        foxglove_bridge_launch,
     ]
 
     return LaunchDescription(declared_arguments + nodes)
